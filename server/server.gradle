@@ -53,7 +53,10 @@ dependencies {
     implementation 'com.aliyun.oss:aliyun-sdk-oss:3.17.0'
 
     implementation 'com.amazonaws:aws-java-sdk-s3:1.12.657'
-
+    // 加密
+    implementation 'com.github.ulisesbocchio:jasypt-spring-boot-starter:3.0.5'
+    // LDAP
+    implementation 'org.springframework.data:spring-data-ldap:3.5.3'
     // test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
@@ -74,13 +77,10 @@ tasks.named('compileJava') {
 
 import org.springframework.boot.gradle.tasks.run.BootRun
 
-import java.nio.file.Files
-
+// server:processResources 消费 :frontend:moveStaticResourcesToServer 拷贝到
+// src/main/resources/static 的产物，必须显式声明依赖（否则 Gradle 8 会因隐式依赖校验失败）。
 tasks.named("processResources") {
-    if (!Files.exists(projectDir.toPath().resolve("src/main/resources/static"))
-            || gradle.startParameter.taskNames.contains("clean")) {
-        dependsOn(':frontend:build')
-    }
+    dependsOn(':frontend:moveStaticResourcesToServer')
 }
 
 tasks.named("clean") {

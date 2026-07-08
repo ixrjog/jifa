@@ -12,6 +12,7 @@
  ********************************************************************************/
 package org.eclipse.jifa.server.domain.dto;
 
+
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import org.eclipse.jifa.server.TestController;
@@ -135,7 +136,13 @@ public class TestFileTransferRequest {
     private void shouldBeIllegal(Set<ConstraintViolation<FileTransferRequest>> result, String... properties) {
         assertEquals(properties.length, result.size());
         for (String property : properties) {
-            assertEquals(1, result.stream().filter(violation -> property.equals(violation.getPropertyPath().toString())).count());
+            assertEquals(
+                    1, result.stream()
+                            .filter(violation -> property.equals(violation.getPropertyPath()
+                                                                         .toString()))
+                            .count()
+            );
         }
     }
+
 }

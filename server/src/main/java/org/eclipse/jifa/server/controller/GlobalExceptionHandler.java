@@ -14,6 +14,8 @@ package org.eclipse.jifa.server.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.constraints.NotNull;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.eclipse.jifa.common.domain.exception.ErrorCodeAccessor;
@@ -42,7 +44,7 @@ public class GlobalExceptionHandler {
 
     private final MultipartProperties multipartProperties;
 
-    public GlobalExceptionHandler(@Nullable MultipartProperties multipartProperties) {
+    public GlobalExceptionHandler(@NonNull MultipartProperties multipartProperties) {
         this.multipartProperties = multipartProperties;
     }
 

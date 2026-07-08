@@ -14,10 +14,18 @@
 version = rootProject.rootDir.toPath().resolve('version').toFile().text.lines().findFirst().get()
 
 repositories {
+    // 国内网络优先走阿里云镜像（含 Maven Central + Gradle 插件），最稳最快
+    maven {
+        url "https://maven.aliyun.com/repository/public"
+    }
+    maven {
+        url "https://maven.aliyun.com/repository/gradle-plugin"
+    }
+    mavenCentral()
+    // 官方 Gradle 插件门户仅作兜底（此前作为首选导致 spring-web 下载 Read timed out）
     maven {
         url "https://plugins.gradle.org/m2/"
     }
-    mavenCentral()
 }
 
 apply plugin: 'idea'

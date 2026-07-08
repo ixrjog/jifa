@@ -16,6 +16,15 @@ plugins {
 
 apply from: "$rootDir/gradle/base.gradle"
 
+node {
+    // 下载并使用固定版本的 Node（自带匹配的 npm 10.x），
+    // 避免使用机器上的旧 npm(7.15.1) 导致 EBADENGINE / 安装失败。
+    download = true
+    version = '20.11.1'
+    // 国内网络加速 Node 二进制下载（默认 https://nodejs.org/dist）
+    distBaseUrl = "https://registry.npmmirror.com/-/binary/node"
+}
+
 tasks.register('buildFrontend', NpmTask) {
     dependsOn npmInstall
     args = ['run', 'build-only']
