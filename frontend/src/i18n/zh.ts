@@ -102,6 +102,12 @@ export default {
       transferMethod: '传输方式',
       type: '类型',
 
+      analysisRequest: '分析请求',
+      analysisRequestPlaceholder: '粘贴来自 Cratos 的分析请求内容（JSON）',
+      detectedType: '识别类型',
+      unrecognized: '未识别',
+      invalidAnalysisRequest: '无法识别分析请求，请检查粘贴的内容',
+
       upload: '上传',
       filename: '文件名',
       text: '文本',

@@ -13,6 +13,8 @@
 package org.eclipse.jifa.server.service.impl;
 
 import jakarta.annotation.Nullable;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jifa.common.domain.vo.PageView;
 import org.eclipse.jifa.common.util.Validate;
@@ -46,6 +48,7 @@ import org.eclipse.jifa.server.service.UserService;
 import org.eclipse.jifa.server.service.WorkerService;
 import org.eclipse.jifa.server.support.FileTransferListener;
 import org.eclipse.jifa.server.util.FileTransferUtil;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
@@ -53,17 +56,24 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import static org.eclipse.jifa.common.domain.exception.CommonException.CE;
 import static org.eclipse.jifa.common.enums.CommonErrorCode.INTERNAL_ERROR;
@@ -103,15 +113,11 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
 
     private final TaskScheduler taskScheduler;
 
-    public FileServiceImpl(TransactionTemplate transactionTemplate,
-                           UserService userService,
-                           FileRepo fileRepo,
-                           TransferringFileRepo transferringFileRepo,
-                           DeletedFileRepo deletedFileRepo,
+    public FileServiceImpl(TransactionTemplate transactionTemplate, UserService userService, FileRepo fileRepo,
+                           TransferringFileRepo transferringFileRepo, DeletedFileRepo deletedFileRepo,
                            @Nullable CurrentStaticWorker currentStaticWorker,
                            @Nullable FileStaticWorkerBindRepo fileStaticWorkerBindRepo,
-                           @Nullable StorageService storageService,
-                           @Nullable WorkerService workerService,
+                           @Nullable StorageService storageService, @Nullable WorkerService workerService,
                            TaskScheduler taskScheduler) {
         this.transactionTemplate = transactionTemplate;
         this.userService = userService;
@@ -131,11 +137,14 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
 
         Page<FileEntity> files;
         PageRequest pageRequest = PageRequest.of(page - 1, pageSize);
-        files = type == null
-                ? fileRepo.findByUserIdOrderByCreatedTimeDesc(userService.getCurrentUserId(), pageRequest)
-                : fileRepo.findByUserIdAndTypeOrderByCreatedTimeDesc(userService.getCurrentUserId(), type, pageRequest);
+        files = type == null ? fileRepo.findByUserIdOrderByCreatedTimeDesc(
+                userService.getCurrentUserId(), pageRequest) : fileRepo.findByUserIdAndTypeOrderByCreatedTimeDesc(
+                userService.getCurrentUserId(), type, pageRequest);
 
-        List<FileView> fileViews = files.getContent().stream().map(FileViewConverter::convert).toList();
+        List<FileView> fileViews = files.getContent()
+                .stream()
+                .map(FileViewConverter::convert)
+                .toList();
         return new PageView<>(page, pageSize, (int) files.getTotalElements(), fileViews);
     }
 
@@ -161,8 +170,10 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
             Optional<FileStaticWorkerBindEntity> optional = fileStaticWorkerBindRepo.findByFileId(file.getId());
             if (optional.isPresent()) {
                 // forward the request to the static worker
-                workerService.syncRequest(optional.get().getStaticWorker(),
-                                          createDeleteRequest("/files/" + fileId, null, Void.class));
+                workerService.syncRequest(
+                        optional.get()
+                                .getStaticWorker(), createDeleteRequest("/files/" + fileId, null, Void.class)
+                );
                 return;
             }
         }
@@ -177,18 +188,124 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
         return file;
     }
 
+    @Value("${oss.accessKeyId}")
+    private String ossAccessKeyId;
+
+    @Value("${oss.secretAccessKey}")
+    private String secretAccessKey;
+
+    @Value("${oss.bucket}")
+    private String bucket;
+
+    @Value("${oss.endpoint}")
+    private String endpoint;
+
+    @Value("${sign.secret}")
+    private String signSecret;
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    @Override
+    public long preCheckSignCratosTransferRequest(FileTransferRequest request) {
+        if (!StringUtils.hasText(request.getJifaAnalysisRequest())) {
+            return 0;
+        }
+
+        Validate.isTrue(StringUtils.hasText(signSecret), INTERNAL_ERROR);
+
+        // 解析 cratos 侧签名的分析请求 JSON
+        JsonNode node;
+        try {
+            node = OBJECT_MAPPER.readTree(request.getJifaAnalysisRequest());
+        } catch (Exception e) {
+            throw CE(ACCESS_DENIED);
+        }
+        String type = node.path("type").asText(null);
+        String ossObjectKey = node.path("ossObjectKey").asText(null);
+        long timestamp = node.path("timestamp").asLong(0L);
+        long expiredTime = node.path("expiredTime").asLong(0L);
+        String sign = node.path("sign").asText(null);
+
+        // 字段完整性校验
+        Validate.isTrue(StringUtils.hasText(type)
+                        && StringUtils.hasText(ossObjectKey)
+                        && StringUtils.hasText(sign)
+                        && timestamp > 0L
+                        && expiredTime > 0L,
+                ACCESS_DENIED);
+
+        // 有效期校验（过期即拒绝）
+        Validate.isTrue(System.currentTimeMillis() < expiredTime, ACCESS_DENIED);
+
+        // 重算签名并比对，规则须与 cratos 侧完全一致：
+        //   signData = type + "\n" + ossObjectKey + "\n" + timestamp + "\n" + expiredTime  (UTF-8)
+        //   sign     = Base64(HMAC-SHA256(signData, signSecret))
+        String signData = String.join("\n", type, ossObjectKey,
+                String.valueOf(timestamp), String.valueOf(expiredTime));
+        String expectedSign = hmacSha256Base64(signData, signSecret);
+        Validate.isTrue(constantTimeEquals(expectedSign, sign), ACCESS_DENIED);
+
+        // 类型映射（签名已覆盖 type，此处仅做防御性转换）
+        FileType fileType;
+        try {
+            fileType = FileType.valueOf(type);
+        } catch (IllegalArgumentException e) {
+            throw CE(FILE_TYPE_MISMATCH);
+        }
+
+        // 校验通过：使用签名内容中受信任的 ossObjectKey / type 发起 OSS 传输
+        FileTransferRequest fileTransferRequest = new FileTransferRequest();
+        fileTransferRequest.setMethod(FileTransferMethod.OSS);
+        fileTransferRequest.setOssAccessKeyId(ossAccessKeyId);
+        fileTransferRequest.setOssSecretAccessKey(secretAccessKey);
+        fileTransferRequest.setOssEndpoint(endpoint);
+        fileTransferRequest.setOssBucketName(bucket);
+        fileTransferRequest.setOssObjectKey(ossObjectKey);
+        fileTransferRequest.setType(fileType);
+        return handleTransferRequest(fileTransferRequest);
+    }
+
+    /**
+     * 计算 Base64(HMAC-SHA256(data, secret))。
+     */
+    private static String hmacSha256Base64(String data, String secret) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] digest = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(digest);
+        } catch (Exception e) {
+            throw CE(INTERNAL_ERROR);
+        }
+    }
+
+    /**
+     * 常量时间比较，避免时序侧信道。
+     */
+    private static boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+    }
+
     @Override
     public long handleTransferRequest(FileTransferRequest request) {
         mustNotBe(ELASTIC_WORKER);
-
-        Validate.isFalse(config.getDisabledFileTransferMethods().contains(request.getMethod()), FILE_TRANSFER_METHOD_DISABLED);
+        Validate.isFalse(
+                config.getDisabledFileTransferMethods()
+                        .contains(request.getMethod()), FILE_TRANSFER_METHOD_DISABLED
+        );
 
         if (isMaster()) {
-            FileLocation location = workerService.decideLocationForNewFile(userService.getCurrentUserRef(), request.getType());
+            FileLocation location = workerService.decideLocationForNewFile(
+                    userService.getCurrentUserRef(), request.getType());
             assert location.valid();
             if (!location.useSharedStorage()) {
-                return workerService.syncRequest(location.staticWorker(),
-                                                 createPostRequest("/files/transfer", request, Long.class));
+                return workerService.syncRequest(
+                        location.staticWorker(),
+                        createPostRequest("/files/transfer", request, Long.class)
+                );
             }
         }
 
@@ -200,32 +317,40 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
         transferringFile.setTransferState(FileTransferState.IN_PROGRESS);
         transferringFileRepo.save(transferringFile);
 
-        storageService.handleTransfer(request, transferringFile.getUniqueName(),
-                                      new FileTransferListenerImpl(transferringFile));
+        storageService.handleTransfer(
+                request, transferringFile.getUniqueName(),
+                new FileTransferListenerImpl(transferringFile)
+        );
         return transferringFile.getId();
     }
 
     @Override
     public FileTransferProgress getTransferProgress(long transferringFileId) {
         mustBe(MASTER, STANDALONE_WORKER);
-        TransferringFileEntity transferringFile = transferringFileRepo.findById(transferringFileId).orElseThrow(() -> CE(UNAVAILABLE));
+        TransferringFileEntity transferringFile = transferringFileRepo.findById(transferringFileId)
+                .orElseThrow(() -> CE(UNAVAILABLE));
         checkAuthority(transferringFile);
         Long fileId = null;
         if (transferringFile.getTransferState() == FileTransferState.SUCCESS) {
-            fileId = fileRepo.findByUniqueName(transferringFile.getUniqueName()).orElseThrow(() -> CE(INTERNAL_ERROR)).getId();
+            fileId = fileRepo.findByUniqueName(transferringFile.getUniqueName())
+                    .orElseThrow(() -> CE(INTERNAL_ERROR))
+                    .getId();
         }
-        return new FileTransferProgress(transferringFile.getTransferState(),
-                                        transferringFile.getTotalSize(),
-                                        transferringFile.getTransferredSize(),
-                                        transferringFile.getFailureMessage(),
-                                        fileId);
+        return new FileTransferProgress(
+                transferringFile.getTransferState(), transferringFile.getTotalSize(),
+                                        transferringFile.getTransferredSize(), transferringFile.getFailureMessage(),
+                                        fileId
+        );
     }
 
     @Override
     public long handleUploadRequest(FileType type, MultipartFile file) throws Throwable {
         mustNotBe(ELASTIC_WORKER);
 
-        Validate.isFalse(config.getDisabledFileTransferMethods().contains(FileTransferMethod.UPLOAD), FILE_TRANSFER_METHOD_DISABLED);
+        Validate.isFalse(
+                config.getDisabledFileTransferMethods()
+                        .contains(FileTransferMethod.UPLOAD), FILE_TRANSFER_METHOD_DISABLED
+        );
 
         if (isMaster()) {
             FileLocation location = workerService.decideLocationForNewFile(userService.getCurrentUserRef(), type);
@@ -287,7 +412,7 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
         Resource resource = null;
         if (isMaster()) {
             FileStaticWorkerBindEntity bind = fileStaticWorkerBindRepo.findByFileId(file.getId())
-                                                                      .orElse(null);
+                    .orElse(null);
             if (bind != null) {
                 // forward the request to the static worker
                 resource = workerService.forwardDownloadRequestToStaticWorker(bind.getStaticWorker(), file.getId());
@@ -314,35 +439,40 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
 
     @Override
     public Optional<StaticWorkerEntity> getStaticWorkerByFile(FileEntity file) {
-        return fileStaticWorkerBindRepo.findByFileId(file.getId()).map(FileStaticWorkerBindEntity::getStaticWorker);
+        return fileStaticWorkerBindRepo.findByFileId(file.getId())
+                .map(FileStaticWorkerBindEntity::getStaticWorker);
     }
 
     private FileEntity getFileEntityByIdAndCheckAuthority(long id) {
-        FileEntity file = fileRepo.findById(id).orElseThrow((() -> CE(FILE_NOT_FOUND)));
+        FileEntity file = fileRepo.findById(id)
+                .orElseThrow((() -> CE(FILE_NOT_FOUND)));
         checkAuthority(file);
         return file;
     }
 
     private FileEntity getFileEntityByUniqueNameAndCheckAuthority(String uniqueName) {
-        FileEntity file = fileRepo.findByUniqueName(uniqueName).orElseThrow((() -> CE(FILE_NOT_FOUND)));
+        FileEntity file = fileRepo.findByUniqueName(uniqueName)
+                .orElseThrow((() -> CE(FILE_NOT_FOUND)));
         checkAuthority(file);
         return file;
     }
 
     private void checkAuthority(BaseFileEntity file) {
         UserEntity user = file.getUser();
-        Validate.isTrue(user == null
-                        || user.getId().equals(userService.getCurrentUserId())
-                        || userService.isCurrentUserAdmin(),
-                        ACCESS_DENIED);
+        Validate.isTrue(
+                user == null || user.getId()
+                        .equals(userService.getCurrentUserId()) || userService.isCurrentUserAdmin(), ACCESS_DENIED
+        );
     }
 
     private String generateFileUniqueName() {
-        return UUID.randomUUID().toString();
+        return UUID.randomUUID()
+                .toString();
     }
 
     private void doDelete(FileEntity file) {
-        FileStaticWorkerBindEntity bind = isStaticWorker() ? fileStaticWorkerBindRepo.findByFileId(file.getId()).orElseThrow(() -> CE(INTERNAL_ERROR)) : null;
+        FileStaticWorkerBindEntity bind = isStaticWorker() ? fileStaticWorkerBindRepo.findByFileId(file.getId())
+                .orElseThrow(() -> CE(INTERNAL_ERROR)) : null;
 
         DeletedFileEntity deletedFile = EntityConverter.convert(file);
         transactionTemplate.executeWithoutResult(status -> {
@@ -374,28 +504,30 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
         public void onStart() {
             transferring = true;
 
-            new Thread(() -> {
-                long currentTransferredSize = 0;
-                while (transferring) {
-                    synchronized (this) {
-                        if (!transferring) {
-                            break;
-                        }
-                        if (currentTransferredSize < transferredSize) {
-                            currentTransferredSize = transferredSize;
+            new Thread(
+                    () -> {
+                        long currentTransferredSize = 0;
+                        while (transferring) {
+                            synchronized (this) {
+                                if (!transferring) {
+                                    break;
+                                }
+                                if (currentTransferredSize < transferredSize) {
+                                    currentTransferredSize = transferredSize;
+                                    try {
+                                        transferringFile.setTransferredSize(currentTransferredSize);
+                                        transferringFile = transferringFileRepo.save(transferringFile);
+                                    } catch (Throwable ignored) {
+                                    }
+                                }
+                            }
                             try {
-                                transferringFile.setTransferredSize(currentTransferredSize);
-                                transferringFile = transferringFileRepo.save(transferringFile);
-                            } catch (Throwable ignored) {
+                                TimeUnit.SECONDS.sleep(1);
+                            } catch (InterruptedException ignored) {
                             }
                         }
-                    }
-                    try {
-                        TimeUnit.SECONDS.sleep(1);
-                    } catch (InterruptedException ignored) {
-                    }
-                }
-            }, "TransferredSize Updater - " + transferringFile.getId()).start();
+                    }, "TransferredSize Updater - " + transferringFile.getId()
+            ).start();
         }
 
         @Override
@@ -437,8 +569,10 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
                     }
                 });
             } finally {
-                taskScheduler.schedule(() -> transferringFileRepo.deleteById(transferringFile.getId()),
-                                       Instant.now().plusSeconds(DELETION_DELAY));
+                taskScheduler.schedule(
+                        () -> transferringFileRepo.deleteById(transferringFile.getId()), Instant.now()
+                                .plusSeconds(DELETION_DELAY)
+                );
             }
         }
 
@@ -455,8 +589,10 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
             try {
                 transferringFile = transferringFileRepo.save(transferringFile);
             } finally {
-                taskScheduler.schedule(() -> transferringFileRepo.deleteById(transferringFile.getId()),
-                                       Instant.now().plusSeconds(DELETION_DELAY));
+                taskScheduler.schedule(
+                        () -> transferringFileRepo.deleteById(transferringFile.getId()), Instant.now()
+                                .plusSeconds(DELETION_DELAY)
+                );
             }
         }
     }

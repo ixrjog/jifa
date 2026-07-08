@@ -98,6 +98,11 @@ public class FileController {
         return fileService.handleTransferRequest(request);
     }
 
+    @PostMapping("/files/cratos/transfer")
+    public long fromCratosTransfer(@Valid @RequestBody FileTransferRequest request) throws Throwable {
+        return fileService.preCheckSignCratosTransferRequest(request);
+    }
+
     /**
      * Query the progress of the file transfer by id.
      *

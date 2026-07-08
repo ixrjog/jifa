@@ -130,6 +130,8 @@ public class FileTransferRequest {
      */
     private String text;
 
+    private String jifaAnalysisRequest;
+
     /**
      * Constraint of FileTransferRequest
      */
@@ -152,6 +154,13 @@ public class FileTransferRequest {
 
         @Override
         public boolean isValid(FileTransferRequest request, ConstraintValidatorContext context) {
+            // Cratos 在线分析请求：签名内容中自带 type/ossObjectKey，且由
+            // FileService#preCheckSignCratosTransferRequest 做签名与字段校验，
+            // 因此此处跳过常规的 method/OSS 等字段校验。
+            if (StringUtils.isNotBlank(request.jifaAnalysisRequest)) {
+                return true;
+            }
+
             String notNullTemplate = "{jakarta.validation.constraints.NotNull.message}";
             boolean valid = true;
             if (request.type == null) {

@@ -102,6 +102,12 @@ export default {
       transferMethod: 'Method',
       type: 'Type',
 
+      analysisRequest: 'Analysis Request',
+      analysisRequestPlaceholder: 'Paste the analysis request from Cratos (JSON)',
+      detectedType: 'Detected Type',
+      unrecognized: 'Unrecognized',
+      invalidAnalysisRequest: 'Unable to parse the analysis request, please check the pasted content',
+
       upload: 'Upload',
       filename: 'File Name',
       text: 'Text',

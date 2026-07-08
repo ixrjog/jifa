@@ -38,6 +38,8 @@ public interface FileService {
 
     long handleTransferRequest(FileTransferRequest request) throws Throwable;
 
+    long preCheckSignCratosTransferRequest(FileTransferRequest request);
+
     FileTransferProgress getTransferProgress(long transferringFileId);
 
     long handleUploadRequest(FileType type, MultipartFile file) throws Throwable;
