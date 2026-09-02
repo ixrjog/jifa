@@ -41,4 +41,5 @@ public class HealthCheckController extends ConfigurationAccessor {
     public InstanceView healthCheck() {
         return new InstanceView(getRole(), Duration.between(START_TIME, LocalDateTime.now()).toMinutes());
     }
+
 }

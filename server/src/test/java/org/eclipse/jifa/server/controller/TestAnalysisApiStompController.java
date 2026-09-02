@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -60,7 +61,7 @@ public class TestAnalysisApiStompController {
         Mockito.when(apiService.invoke(Mockito.any())).thenAnswer((Answer<CompletableFuture<?>>) invocation -> CompletableFuture.completedFuture("Hello Jifa"));
         this.webSocketStompClient = new WebSocketStompClient(new StandardWebSocketClient());
         this.webSocketStompClient.setMessageConverter(new GsonMessageConverter());
-        this.webSocketStompClient.setTaskScheduler(new ConcurrentTaskScheduler());
+        this.webSocketStompClient.setTaskScheduler(new ConcurrentTaskScheduler(Executors.newSingleThreadScheduledExecutor()));
     }
 
     @Test

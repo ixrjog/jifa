@@ -14,7 +14,6 @@ package org.eclipse.jifa.server.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.validation.constraints.NotNull;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
@@ -25,7 +24,6 @@ import org.eclipse.jifa.server.enums.ServerErrorCode;
 import org.eclipse.jifa.server.Constant;
 import org.eclipse.jifa.server.util.ErrorUtil;
 import org.springframework.boot.servlet.autoconfigure.MultipartProperties;
-import org.springframework.lang.Nullable;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.util.unit.DataSize;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -80,12 +78,7 @@ public class GlobalExceptionHandler {
         long actualMaxSize;
         if (multipartProperties != null) {
             DataSize maxFileSize = multipartProperties.getMaxFileSize();
-            if (maxFileSize != null) {
-                actualMaxSize = maxFileSize.toBytes();
-            } else {
-                // This should rarely happen, but fallback to unlimited if DataSize is null
-                actualMaxSize = Constant.DEFAULT_MAX_UPLOAD_SIZE; // Long.MAX_VALUE (unlimited)
-            }
+            actualMaxSize = maxFileSize.toBytes();
         } else {
             // This should rarely happen in a Spring Boot app, but fallback to unlimited
             actualMaxSize = Constant.DEFAULT_MAX_UPLOAD_SIZE; // Long.MAX_VALUE (unlimited)

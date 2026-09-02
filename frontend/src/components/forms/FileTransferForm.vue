@@ -15,8 +15,9 @@ import { fileTypeMap } from '@/composables/file-types';
 import axios from 'axios';
 import { t } from '@/i18n/i18n';
 
-defineProps({
-  visible: Boolean
+const props = defineProps({
+  visible: Boolean,
+  initialAnalysisRequest: { type: String, default: '' }
 });
 
 const emit = defineEmits(['update:visible', 'transferCompletionCallback']);
@@ -29,6 +30,17 @@ const params = reactive({
   jifaAnalysisRequest: ''
 });
 
+// Prefill from a link (?ar=<base64>) opened externally.
+watch(
+  () => props.initialAnalysisRequest,
+  (val) => {
+    if (val) {
+      params.jifaAnalysisRequest = val;
+    }
+  },
+  { immediate: true }
+);
+
 const form = ref();
 
 // Transfer progress states
@@ -38,19 +50,41 @@ const percentage = ref(0);
 const progressStatus = ref<{ status?: string }>({});
 const message = ref('');
 
-// Auto-detect the file type from the pasted analysis request JSON (its `type` field).
-const detectedType = computed<string | null>(() => {
+interface AnalysisRequest {
+  type?: string;
+  ossObjectKey?: string;
+  timestamp?: number;
+  expiredTime?: number;
+  sign?: string;
+}
+
+// Parse the pasted analysis request JSON once.
+const parsedAnalysisRequest = computed<AnalysisRequest | null>(() => {
   const raw = params.jifaAnalysisRequest?.trim();
   if (!raw) {
     return null;
   }
   try {
-    const obj = JSON.parse(raw);
-    const type = obj?.type;
-    return type && fileTypeMap.has(type) ? type : null;
+    return JSON.parse(raw);
   } catch {
     return null;
   }
+});
+
+/** Format epoch millis to "y/M/d HH:mm:ss". */
+function formatTime(ms: number | undefined): string {
+  if (!ms) {
+    return '';
+  }
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+// Auto-detect the file type from the analysis request (its `type` field).
+const detectedType = computed<string | null>(() => {
+  const type = parsedAnalysisRequest.value?.type;
+  return type && fileTypeMap.has(type) ? type : null;
 });
 
 const detectedTypeLabel = computed(() => {
@@ -67,7 +101,13 @@ const analysisRequestInvalid = computed(() => {
   return !!params.jifaAnalysisRequest?.trim() && !detectedType.value;
 });
 
-const canSubmit = computed(() => !!detectedType.value && !processing.value);
+// The analysis request carries an expiredTime (epoch millis); once passed, refuse to analyze.
+const analysisExpired = computed(() => {
+  const expiredTime = parsedAnalysisRequest.value?.expiredTime;
+  return !!detectedType.value && typeof expiredTime === 'number' && Date.now() >= expiredTime;
+});
+
+const canSubmit = computed(() => !!detectedType.value && !analysisExpired.value && !processing.value);
 
 function resetStates() {
   processing.value = false;
@@ -87,6 +127,10 @@ function error(msg: string) {
 
 function doTransfer() {
   if (!detectedType.value) {
+    return;
+  }
+  if (analysisExpired.value) {
+    error(_t('analysisExpired'));
     return;
   }
   resetStates();
@@ -155,8 +199,8 @@ function close(done: any) {
       :model="params"
       ref="form"
     >
-      <!-- Paste the cratos analysis request -->
-      <el-form-item :label="_t('analysisRequest')">
+      <!-- Paste the cratos analysis request (hidden: content is provided via link) -->
+      <el-form-item :label="_t('analysisRequest')" v-if="false">
         <el-input
           v-model="params.jifaAnalysisRequest"
           type="textarea"
@@ -176,11 +220,51 @@ function close(done: any) {
         <span v-else style="color: var(--el-text-color-placeholder)">—</span>
       </el-form-item>
 
+      <!-- Parsed request fields -->
+      <el-form-item :label="_t('requestDetails')" v-if="parsedAnalysisRequest">
+        <div class="ej-ar-fields">
+          <div class="ej-ar-field">
+            <span class="ej-ar-key">Type</span>
+            <span class="ej-ar-val">{{ parsedAnalysisRequest.type }}</span>
+          </div>
+          <div class="ej-ar-field">
+            <span class="ej-ar-key">OssObjectKey</span>
+            <span class="ej-ar-val">{{ parsedAnalysisRequest.ossObjectKey }}</span>
+          </div>
+          <div class="ej-ar-field">
+            <span class="ej-ar-key">Timestamp</span>
+            <span class="ej-ar-val">
+              {{ parsedAnalysisRequest.timestamp }}
+              <span class="ej-ar-hint" v-if="parsedAnalysisRequest.timestamp">({{ formatTime(parsedAnalysisRequest.timestamp) }})</span>
+            </span>
+          </div>
+          <div class="ej-ar-field">
+            <span class="ej-ar-key">ExpiredTime</span>
+            <span class="ej-ar-val">
+              {{ parsedAnalysisRequest.expiredTime }}
+              <span class="ej-ar-hint" v-if="parsedAnalysisRequest.expiredTime">({{ formatTime(parsedAnalysisRequest.expiredTime) }})</span>
+            </span>
+          </div>
+          <div class="ej-ar-field">
+            <span class="ej-ar-key">Sign</span>
+            <span class="ej-ar-val ej-ar-sign">{{ parsedAnalysisRequest.sign }}</span>
+          </div>
+        </div>
+      </el-form-item>
+
       <el-alert
         v-if="analysisRequestInvalid"
         style="margin-bottom: 12px"
         :title="_t('invalidAnalysisRequest')"
         type="error"
+        :closable="false"
+      />
+
+      <el-alert
+        v-if="analysisExpired"
+        style="margin-bottom: 12px"
+        :title="_t('analysisExpired')"
+        type="warning"
         :closable="false"
       />
 
@@ -225,5 +309,42 @@ function close(done: any) {
 <style scoped>
 .ej-file-transfer-form-input {
   width: 420px;
+}
+
+.ej-ar-fields {
+  width: 420px;
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  border-radius: 4px;
+  padding: 8px 12px;
+  background: var(--el-fill-color-light, #f5f7fa);
+}
+
+.ej-ar-field {
+  display: flex;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ej-ar-key {
+  flex: 0 0 96px;
+  color: var(--el-text-color-secondary, #909399);
+  font-weight: 600;
+}
+
+.ej-ar-val {
+  flex: 1;
+  word-break: break-all;
+  color: var(--el-text-color-primary, #303133);
+}
+
+.ej-ar-hint {
+  color: var(--el-text-color-secondary, #909399);
+  margin-left: 4px;
+}
+
+.ej-ar-sign {
+  font-family: monospace;
 }
 </style>

@@ -66,7 +66,7 @@ export default {
       threadDump: '线程快照',
       jfr: 'JFR 文件',
 
-      new: '新文件',
+      new: '新的在线分析',
 
       analyze: '分析'
     },
@@ -105,8 +105,10 @@ export default {
       analysisRequest: '分析请求',
       analysisRequestPlaceholder: '粘贴来自 Cratos 的分析请求内容（JSON）',
       detectedType: '识别类型',
+      requestDetails: '请求详情',
       unrecognized: '未识别',
       invalidAnalysisRequest: '无法识别分析请求，请检查粘贴的内容',
+      analysisExpired: '分析请求已过期，请回到 Cratos 重新复制分析请求',
 
       upload: '上传',
       filename: '文件名',

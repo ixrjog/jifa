@@ -42,7 +42,6 @@ import static org.eclipse.jifa.common.util.GsonHolder.GSON;
 public class AnalysisApiHttpController extends ConfigurationAccessor {
 
     private final AnalysisApiService apiService;
-
     private final ScheduledExecutorService scheduledExecutorServiceForSseHeartbeat;
 
     public AnalysisApiHttpController(AnalysisApiService apiService) {
@@ -120,4 +119,5 @@ public class AnalysisApiHttpController extends ConfigurationAccessor {
             }
         }
     }
+
 }

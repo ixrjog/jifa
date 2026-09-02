@@ -60,4 +60,5 @@ public class UserController extends ConfigurationAccessor {
 
     record RegisterRequest(String name, String username, String password) {
     }
+
 }

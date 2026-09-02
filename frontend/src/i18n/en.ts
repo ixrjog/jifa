@@ -66,7 +66,7 @@ export default {
       threadDump: 'Thread Dump',
       jfr: 'JFR File',
 
-      new: 'New File',
+      new: 'New Online Analysis',
 
       analyze: 'Analyze'
     },
@@ -105,8 +105,10 @@ export default {
       analysisRequest: 'Analysis Request',
       analysisRequestPlaceholder: 'Paste the analysis request from Cratos (JSON)',
       detectedType: 'Detected Type',
+      requestDetails: 'Request Details',
       unrecognized: 'Unrecognized',
       invalidAnalysisRequest: 'Unable to parse the analysis request, please check the pasted content',
+      analysisExpired: 'The analysis request has expired, please copy a new one from Cratos',
 
       upload: 'Upload',
       filename: 'File Name',

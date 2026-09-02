@@ -35,4 +35,5 @@ public class ElasticWorkerController {
     public ElasticWorkerState state(@PathVariable("worker_id") long workId) {
         return workerService.getElasticWorkerState(workId);
     }
+
 }

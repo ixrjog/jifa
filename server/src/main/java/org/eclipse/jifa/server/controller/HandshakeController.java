@@ -38,11 +38,8 @@ import java.util.Map;
 public class HandshakeController extends ConfigurationAccessor {
 
     private final CipherService cipherService;
-
     private final UserService userService;
-
     private final Map<String, String> oauth2LoginLinks = new HashMap<>();
-
     private final MultipartProperties multipartProperties;
 
     public HandshakeController(CipherService cipherService,
@@ -67,7 +64,6 @@ public class HandshakeController extends ConfigurationAccessor {
     public HandshakeResponse handshake() {
         UserEntity userEntity = userService.getCurrentUser();
         User user = userEntity == null ? null : new User(userEntity.getName(), userEntity.isAdmin());
-
         // Get upload size limit configuration
         long maxUploadSize;
         if (multipartProperties != null) {
@@ -76,7 +72,6 @@ public class HandshakeController extends ConfigurationAccessor {
         } else {
             maxUploadSize = Constant.DEFAULT_MAX_UPLOAD_SIZE;
         }
-
         return new HandshakeResponse(getRole(),
                                      config.isAllowLogin(),
                                      config.isAllowLogin() ? oauth2LoginLinks : Collections.emptyMap(),
@@ -87,4 +82,5 @@ public class HandshakeController extends ConfigurationAccessor {
                                      user,
                                      maxUploadSize);
     }
+
 }

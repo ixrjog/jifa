@@ -20,7 +20,8 @@ import org.eclipse.jifa.server.enums.Role;
 import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.CacheControl;
+import org.springframework.http.converter.HttpMessageConverters;
 import org.springframework.http.converter.json.GsonHttpMessageConverter;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.web.servlet.config.annotation.PathMatchConfigurer;
@@ -29,7 +30,7 @@ import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.view.InternalResourceViewResolver;
 
-import java.util.List;
+import java.time.Duration;
 
 @SuppressWarnings("NullableProblems")
 @Configuration
@@ -39,8 +40,15 @@ public class HttpConfigurer extends ConfigurationAccessor implements WebMvcConfi
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         if (isMaster() || isStandaloneWorker()) {
+            // 带内容哈希的构建产物（/assets/*-<hash>.js|css|svg）：文件名随内容变化，可长期强缓存
+            registry.addResourceHandler("/assets/**")
+                    .addResourceLocations("classpath:/static/assets/")
+                    .setCacheControl(CacheControl.maxAge(Duration.ofDays(365)).cachePublic().immutable());
+
+            // 其余静态资源（index.html 等无哈希文件）：可缓存但每次重新校验，保证发版后立即生效
             registry.addResourceHandler("/**")
-                    .addResourceLocations("classpath:/static/");
+                    .addResourceLocations("classpath:/static/")
+                    .setCacheControl(CacheControl.noCache());
         }
     }
 
@@ -79,17 +87,9 @@ public class HttpConfigurer extends ConfigurationAccessor implements WebMvcConfi
     }
 
     @Override
-    public void extendMessageConverters(List<HttpMessageConverter<?>> converters) {
-        // Insert GsonHttpMessageConverter right after ByteArrayHttpMessageConverter so that Gson
-        // takes precedence over the String/Jackson converters for JSON (de)serialization, while
-        // @RequestBody byte[] is still read as raw bytes by ByteArrayHttpMessageConverter.
-        int index = Math.min(1, converters.size());
-        for (int i = 0; i < converters.size(); i++) {
-            if (converters.get(i) instanceof org.springframework.http.converter.ByteArrayHttpMessageConverter) {
-                index = i + 1;
-                break;
-            }
-        }
-        converters.add(index, new GsonHttpMessageConverter(GsonHolder.GSON));
+    public void configureMessageConverters(HttpMessageConverters.ServerBuilder builder) {
+        // 用 Gson 处理 JSON（取代默认的 Jackson JSON 转换器）；@RequestBody byte[] 仍由
+        // 默认的 ByteArrayHttpMessageConverter 以原始字节读取。
+        builder.withJsonConverter(new GsonHttpMessageConverter(GsonHolder.GSON));
     }
 }

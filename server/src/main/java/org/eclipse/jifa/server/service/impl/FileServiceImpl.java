@@ -268,8 +268,7 @@ public class FileServiceImpl extends ConfigurationAccessor implements FileServic
     /**
      * 计算 Base64(HMAC-SHA256(data, secret))。
      */
-    private static String hmacSha256Base64(String data, String secret) {
-        try {
+    private static String hmacSha256Base64(String data, String secret) {        try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] digest = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));

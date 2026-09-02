@@ -97,4 +97,5 @@ public class AnalysisApiStompController {
         }
         log.error("Error occurred when handling stomp request", throwable);
     }
+
 }

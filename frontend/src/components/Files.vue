@@ -14,7 +14,6 @@
 import { useRouter } from 'vue-router';
 import { Calendar, Delete, Histogram, MoreFilled, Operation } from '@element-plus/icons-vue';
 import Download from 'vue-material-design-icons/Download.vue';
-import Upload from 'vue-material-design-icons/Upload.vue';
 import FileTransferForm from '@/components/forms/FileTransferForm.vue';
 import { fileTypeMap } from '@/composables/file-types';
 import axios from 'axios';
@@ -27,6 +26,14 @@ const env = useEnv();
 const router = useRouter();
 const type = ref('');
 const transferFormVisible = ref(false);
+const initialAnalysisRequest = ref('');
+
+/** UTF-8 safe base64 decode. */
+function decodeBase64(b64: string): string {
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
 
 watch(type, () => {
   page.value = 1;
@@ -91,6 +98,20 @@ function analyze(type: string, uniqueName: string) {
 
 onMounted(() => {
   queryFiles();
+  // Opened from Cratos "在线分析": ?ar=<base64(analysisRequestJson)>
+  const ar = new URLSearchParams(window.location.search).get('ar');
+  if (ar) {
+    try {
+      initialAnalysisRequest.value = decodeBase64(ar);
+      transferFormVisible.value = true;
+    } catch (e) {
+      console.error('Failed to decode analysis request from URL', e);
+    }
+    // Strip the param so a refresh does not reopen the dialog.
+    const url = new URL(window.location.href);
+    url.searchParams.delete('ar');
+    window.history.replaceState(window.history.state, '', url.toString());
+  }
 });
 </script>
 
@@ -100,6 +121,7 @@ onMounted(() => {
     <FileTransferForm
       @transfer-completion-callback="(id) => transferCompletionCallback(id)"
       v-model:visible="transferFormVisible"
+      :initial-analysis-request="initialAnalysisRequest"
       v-if="transferFormVisible"
     />
 
@@ -116,13 +138,6 @@ onMounted(() => {
           ></el-option>
         </el-select>
       </el-space>
-
-      <el-button style="margin-left: 10px" type="primary" plain @click="transferFormVisible = true">
-        {{ t('file.new') }}
-        <el-icon style="margin-left: 5px" size="16">
-          <Upload />
-        </el-icon>
-      </el-button>
     </div>
 
     <el-table
